@@ -323,5 +323,55 @@ def search_dict(partial: dict, search_key: str) -> Generator[dict, None, None]:
                 stack.append(value)
 
 
+def parse_rich_item_new_format(rich_item: dict) -> dict:
+    """Parse the new richItemRenderer → lockupViewModel format."""
+    try:
+        content = rich_item.get("content", {})
+        lockup_view = content.get("lockupViewModel", {})
+        metadata = lockup_view.get("metadata", {})
+        lockup_metadata = metadata.get("lockupMetadataViewModel", {})
+
+        # Extract title
+        title = lockup_metadata.get("title", {}).get("content", "")
+
+        # Extract video ID from watchEndpoint
+        video_id = None
+        for endpoint in search_dict(lockup_view, "watchEndpoint"):
+            video_id = endpoint.get("videoId")
+            if video_id:
+                break
+
+        if video_id:
+            # Return in the old videoRenderer format for compatibility
+            return {
+                "videoId": video_id,
+                "title": {
+                    "simpleText": title
+                }
+            }
+    except (KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
 def get_videos_items(data: dict, selector: str) -> Generator[dict, None, None]:
-    return search_dict(data, selector)
+    """Get video items, handling both old and new YouTube formats."""
+
+    # Handle the new lockupViewModel format (current YouTube)
+    if selector == "videoRenderer":
+        # Try new format first
+        rich_items = list(search_dict(data, "richItemRenderer"))
+        if rich_items:
+            for rich_item in rich_items:
+                video_data = parse_rich_item_new_format(rich_item)
+                if video_data:
+                    yield video_data
+            return
+
+        # Fallback to old videoRenderer format
+        for video in search_dict(data, selector):
+            yield video
+    else:
+        # Keep original behavior for other selectors (playlists, etc.)
+        for item in search_dict(data, selector):
+            yield item
