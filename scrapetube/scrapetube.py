@@ -71,7 +71,7 @@ def get_channel(
     elif channel_username:
         base_url = f"https://www.youtube.com/@{channel_username}"
 
-    url = "{base_url}/{content_type}?view=0&flow=grid".format(
+    url = "{base_url}/{content_type}?view=2".format(
         base_url=base_url,
         content_type=content_type,
     )
