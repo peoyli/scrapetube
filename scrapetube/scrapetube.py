@@ -49,7 +49,7 @@ def get_channel(
         proxies (``dict``, *optional*):
             A dictionary with the proxies you want to use. Ex:
             ``{'https': 'http://username:password@101.102.103.104:3128'}``
-        
+
         sort_by (``str``, *optional*):
             In what order to retrieve to videos. Pass one of the following values.
             ``"newest"``: Get the new videos first.
@@ -97,7 +97,7 @@ def get_playlist(
         sleep (``int``, *optional*):
             Seconds to sleep between API calls to youtube, in order to prevent getting blocked.
             Defaults to 1.
-        
+
         proxies (``dict``, *optional*):
             A dictionary with the proxies you want to use. Ex:
             ``{'https': 'http://username:password@101.102.103.104:3128'}``
@@ -105,7 +105,13 @@ def get_playlist(
 
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
     api_endpoint = "https://www.youtube.com/youtubei/v1/browse"
-    videos = get_videos(url, api_endpoint, "playlistVideoListRenderer", "playlistVideoRenderer", limit, sleep, proxies)
+
+    # YouTube migrated playlist pages from the old "playlistVideoListRenderer"
+    # container to "itemSectionRenderer" wrapping richItemRenderer/lockupViewModel
+    # nodes. The old selector no longer matches anything on current pages.
+    videos = get_videos(
+        url, api_endpoint, "itemSectionRenderer", "playlistVideoRenderer", limit, sleep, proxies
+    )
     for video in videos:
         yield video
 
@@ -143,7 +149,7 @@ def get_search(
         results_type (``str``, *optional*):
             What type you want to search for. Pass one of the following values:
             ``"video"|"channel"|"playlist"|"movie"``. Defaults to "video".
-        
+
         proxies (``dict``, *optional*):
             A dictionary with the proxies you want to use. Ex:
             ``{'https': 'http://username:password@101.102.103.104:3128'}``
@@ -289,19 +295,25 @@ def get_json_from_html(html: str, key: str, num_chars: int = 2, stop: str = '"')
 def get_next_data(data: dict, sort_by: str = None) -> dict:
     # Youtube, please don't change the order of these
     sort_by_map = {
-        "newest": 0, 
+        "newest": 0,
         "popular": 1,
-        "oldest": 2, 
+        "oldest": 2,
     }
     if sort_by and sort_by != "newest":
         endpoint = next(
             search_dict(data, "feedFilterChipBarRenderer"), None)["contents"][sort_by_map[sort_by]]["chipCloudChipRenderer"]["navigationEndpoint"]
     else:
         endpoint = next(search_dict(data, "continuationEndpoint"), None)
+        if not endpoint:
+            endpoint = next(
+                (c for c in search_dict(data, "innertubeCommand") if "continuationCommand" in c),
+                None
+            )
     if not endpoint:
         return None
+    token = endpoint["continuationCommand"]["token"]
     next_data = {
-        "token": endpoint["continuationCommand"]["token"],
+        "token": token,
         "click_params": {"clickTrackingParams": endpoint["clickTrackingParams"]},
     }
 
@@ -324,54 +336,164 @@ def search_dict(partial: dict, search_key: str) -> Generator[dict, None, None]:
 
 
 def parse_rich_item_new_format(rich_item: dict) -> dict:
-    """Parse the new richItemRenderer → lockupViewModel format."""
+    """Parse richItemRenderer wrapper (used on channel pages)."""
+    content = rich_item.get("content", {})
+    lockup_view = content.get("lockupViewModel", {})
+    if lockup_view:
+        return parse_lockup_view_model(lockup_view)
+    return None
+
+def parse_lockup_view_model(lockup_view: dict) -> dict:
+    """Parse a lockupViewModel dict directly (used by both channels and playlists)."""
     try:
-        content = rich_item.get("content", {})
-        lockup_view = content.get("lockupViewModel", {})
+        # Try the simple, direct approach first, get videoId from contentId
+        video_id = lockup_view.get("contentId")
+        content_type = lockup_view.get("contentType", "")
+
+        # Only proceed if this is actually a video
+        if content_type and content_type != "LOCKUP_CONTENT_TYPE_VIDEO":
+            return None
+
+        # Fallback: search for watchEndpoint if still no videoId
+        if not video_id:
+            for endpoint in search_dict(lockup_view, "watchEndpoint"):
+                video_id = endpoint.get("videoId")
+                if video_id:
+                    break
+
+        if not video_id:
+            return None
+
         metadata = lockup_view.get("metadata", {})
         lockup_metadata = metadata.get("lockupMetadataViewModel", {})
 
         # Extract title
         title = lockup_metadata.get("title", {}).get("content", "")
 
-        # Extract video ID from watchEndpoint
+        # Extract thumbnail URL
+        thumbnail_url = None
+        content_image = lockup_view.get("contentImage", {})
+        sources = content_image.get("thumbnailViewModel", {}).get("image", {}).get("sources", [])
+        if sources:
+            thumbnail_url = sources[-1].get("url")
+
+        # Extract metadata rows (channel name, views, upload time)
+        channel_name = None
+        views = None
+        upload_time = None
+
+        meta_rows = lockup_metadata.get("metadata", {}).get("contentMetadataViewModel", {}).get("metadataRows", [])
+
+        if len(meta_rows) == 1:
+            # Channel pages: single row is views/upload only, no channel name
+            parts = meta_rows[0].get("metadataParts", [])
+            if len(parts) > 0:
+                views = parts[0].get("text", {}).get("content", "")
+            if len(parts) > 1:
+                upload_time = parts[1].get("text", {}).get("content", "")
+
+        elif len(meta_rows) >= 2:
+            # Playlists: row 0 = channel name, row 1 = views/upload
+            parts0 = meta_rows[0].get("metadataParts", [])
+            if parts0:
+                channel_name = parts0[0].get("text", {}).get("content", "")
+
+            parts1 = meta_rows[1].get("metadataParts", [])
+            if len(parts1) > 0:
+                views = parts1[0].get("text", {}).get("content", "")
+            if len(parts1) > 1:
+                upload_time = parts1[1].get("text", {}).get("content", "")
+
+        result = {
+            "videoId": video_id,
+            "title": {"simpleText": title},
+        }
+
+        if thumbnail_url:
+            result["thumbnail"] = {"thumbnails": [{"url": thumbnail_url}]}
+        if channel_name:
+            result["shortBylineText"] = {"simpleText": channel_name}
+        if views:
+            result["viewCountText"] = {"simpleText": views}
+        if upload_time:
+            result["publishedTimeText"] = {"simpleText": upload_time}
+
+        return result
+
+    except (KeyError, TypeError, AttributeError, IndexError):
+        pass
+
+    return None
+
+def parse_shorts_lockup_format(rich_item: dict) -> dict:
+    """Parse shortsLockupViewModel format (Shorts)."""
+    try:
+        content = rich_item.get("content", {})
+        shorts_lockup = content.get("shortsLockupViewModel", {})
+
+        if not shorts_lockup:
+            return None
+
         video_id = None
-        for endpoint in search_dict(lockup_view, "watchEndpoint"):
+        for endpoint in search_dict(shorts_lockup, "reelWatchEndpoint"):
             video_id = endpoint.get("videoId")
             if video_id:
                 break
 
-        if video_id:
-            # Return in the old videoRenderer format for compatibility
-            return {
-                "videoId": video_id,
-                "title": {
-                    "simpleText": title
-                }
-            }
+        if not video_id:
+            return None
+
+        overlay_metadata = shorts_lockup.get("overlayMetadata", {})
+        title = overlay_metadata.get("primaryText", {}).get("content", "")
+        views = overlay_metadata.get("secondaryText", {}).get("content", "")
+
+        return {
+            "videoId": video_id,
+            "title": {"simpleText": title},
+            "viewCountText": {"simpleText": views},
+            "isShort": True,
+        }
+
     except (KeyError, TypeError, AttributeError):
         pass
-    return None
 
+    return None
 
 def get_videos_items(data: dict, selector: str) -> Generator[dict, None, None]:
     """Get video items, handling both old and new YouTube formats."""
 
-    # Handle the new lockupViewModel format (current YouTube)
-    if selector == "videoRenderer":
-        # Try new format first
+    if selector in ("videoRenderer", "playlistVideoRenderer"):
         rich_items = list(search_dict(data, "richItemRenderer"))
+        yielded_any = False
+
         if rich_items:
             for rich_item in rich_items:
                 video_data = parse_rich_item_new_format(rich_item)
                 if video_data:
+                    yielded_any = True
                     yield video_data
+                    continue
+                video_data = parse_shorts_lockup_format(rich_item)
+                if video_data:
+                    yielded_any = True
+                    yield video_data
+
+        if yielded_any:
             return
 
-        # Fallback to old videoRenderer format
+        lockup_items = list(search_dict(data, "lockupViewModel"))
+        if lockup_items:
+            for lockup_view in lockup_items:
+                video_data = parse_lockup_view_model(lockup_view)
+                if video_data:
+                    yielded_any = True
+                    yield video_data
+
+        if yielded_any:
+            return
+
         for video in search_dict(data, selector):
             yield video
     else:
-        # Keep original behavior for other selectors (playlists, etc.)
         for item in search_dict(data, selector):
             yield item
