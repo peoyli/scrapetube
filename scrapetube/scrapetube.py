@@ -80,7 +80,6 @@ def get_channel(
     for video in videos:
         yield video
 
-
 def get_playlist(
     playlist_id: str, limit: int = None, sleep: int = 1, proxies: dict = None
 ) -> Generator[dict, None, None]:
@@ -114,7 +113,6 @@ def get_playlist(
     )
     for video in videos:
         yield video
-
 
 def get_search(
     query: str,
@@ -153,7 +151,6 @@ def get_search(
         proxies (``dict``, *optional*):
             A dictionary with the proxies you want to use. Ex:
             ``{'https': 'http://username:password@101.102.103.104:3128'}``
-
     """
 
     sort_by_map = {
@@ -179,8 +176,6 @@ def get_search(
     for video in videos:
         yield video
 
-
-
 def get_video(
     id: str,
 ) -> dict:
@@ -205,8 +200,6 @@ def get_video(
     )
     return next(search_dict(data, "videoPrimaryInfoRenderer"))
 
-
-
 def get_videos(
     url: str, api_endpoint: str, selector_list: str, selector_item: str, limit: int, sleep: float, proxies: dict = None, sort_by: str = None
 ) -> Generator[dict, None, None]:
@@ -229,11 +222,12 @@ def get_videos(
             data = next(search_dict(data, selector_list), None)
             next_data = get_next_data(data, sort_by)
             is_first = False
-            if sort_by and sort_by != "newest": 
+            if sort_by and sort_by != "newest":
                 continue
         else:
             data = get_ajax_data(session, api_endpoint, api_key, next_data, client)
             next_data = get_next_data(data)
+
         for result in get_videos_items(data, selector_item):
             try:
                 count += 1
@@ -252,7 +246,6 @@ def get_videos(
 
     session.close()
 
-
 def get_session(proxies: dict = None) -> requests.Session:
     session = requests.Session()
     if proxies:
@@ -266,10 +259,8 @@ def get_session(proxies: dict = None) -> requests.Session:
 def get_initial_data(session: requests.Session, url: str) -> str:
     session.cookies.set("CONSENT", "YES+cb", domain=".youtube.com")
     response = session.get(url, params={"ucbcb":1})
-
     html = response.text
     return html
-
 
 def get_ajax_data(
     session: requests.Session,
@@ -285,12 +276,10 @@ def get_ajax_data(
     response = session.post(api_endpoint, params={"key": api_key}, json=data)
     return response.json()
 
-
 def get_json_from_html(html: str, key: str, num_chars: int = 2, stop: str = '"') -> str:
     pos_begin = html.find(key) + len(key) + num_chars
     pos_end = html.find(stop, pos_begin)
     return html[pos_begin:pos_end]
-
 
 def get_next_data(data: dict, sort_by: str = None) -> dict:
     # Youtube, please don't change the order of these
@@ -309,8 +298,10 @@ def get_next_data(data: dict, sort_by: str = None) -> dict:
                 (c for c in search_dict(data, "innertubeCommand") if "continuationCommand" in c),
                 None
             )
+
     if not endpoint:
         return None
+
     token = endpoint["continuationCommand"]["token"]
     next_data = {
         "token": token,
@@ -318,7 +309,6 @@ def get_next_data(data: dict, sort_by: str = None) -> dict:
     }
 
     return next_data
-
 
 def search_dict(partial: dict, search_key: str) -> Generator[dict, None, None]:
     stack = [partial]
@@ -333,7 +323,6 @@ def search_dict(partial: dict, search_key: str) -> Generator[dict, None, None]:
         elif isinstance(current_item, list):
             for value in current_item:
                 stack.append(value)
-
 
 def parse_rich_item_new_format(rich_item: dict) -> dict:
     """Parse richItemRenderer wrapper (used on channel pages)."""
@@ -391,7 +380,6 @@ def parse_lockup_view_model(lockup_view: dict) -> dict:
                 views = parts[0].get("text", {}).get("content", "")
             if len(parts) > 1:
                 upload_time = parts[1].get("text", {}).get("content", "")
-
         elif len(meta_rows) >= 2:
             # Playlists: row 0 = channel name, row 1 = views/upload
             parts0 = meta_rows[0].get("metadataParts", [])
