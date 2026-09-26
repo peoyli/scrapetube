@@ -76,7 +76,7 @@ def get_channel(
         content_type=content_type,
     )
     api_endpoint = "https://www.youtube.com/youtubei/v1/browse"
-    videos = get_videos(url, api_endpoint, "contents", type_property_map[content_type], limit, sleep, proxies, sort_by)
+    videos = get_videos(url, api_endpoint, "contents", type_property_map[content_type], limit, sleep, proxies, sort_by, content_type)
     for video in videos:
         yield video
 
@@ -201,7 +201,7 @@ def get_video(
     return next(search_dict(data, "videoPrimaryInfoRenderer"))
 
 def get_videos(
-    url: str, api_endpoint: str, selector_list: str, selector_item: str, limit: int, sleep: float, proxies: dict = None, sort_by: str = None
+    url: str, api_endpoint: str, selector_list: str, selector_item: str, limit: int, sleep: float, proxies: dict = None, sort_by: str = None, content_type: str = None
 ) -> Generator[dict, None, None]:
     session = get_session(proxies)
     is_first = True
@@ -219,6 +219,21 @@ def get_videos(
             data = json.loads(
                 get_json_from_html(html, "var ytInitialData = ", 0, "};") + "}"
             )
+
+            # Do not parse the channel Home page when the requested tab does not exist.
+            if content_type:
+                tabs = next(search_dict(data, "tabs"), [])
+                tab_urls = [
+                    tab.get("tabRenderer", {})
+                    .get("endpoint", {})
+                    .get("commandMetadata", {})
+                    .get("webCommandMetadata", {})
+                    .get("url", "")
+                    for tab in tabs
+                ]
+                if not any(tab_url.endswith("/" + content_type) for tab_url in tab_urls):
+                    return
+
             data = next(search_dict(data, selector_list), None)
             next_data = get_next_data(data, sort_by)
             is_first = False
