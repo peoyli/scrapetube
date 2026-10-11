@@ -1,3 +1,3 @@
 from .scrapetube import get_channel, get_search, get_playlist, get_video
 
-__version__ = "2.7.1"
+__version__ = "2.7.2"
