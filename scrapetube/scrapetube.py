@@ -308,11 +308,6 @@ def get_next_data(data: dict, sort_by: str = None) -> dict:
             search_dict(data, "feedFilterChipBarRenderer"), None)["contents"][sort_by_map[sort_by]]["chipCloudChipRenderer"]["navigationEndpoint"]
     else:
         endpoint = next(search_dict(data, "continuationEndpoint"), None)
-        if not endpoint:
-            endpoint = next(
-                (c for c in search_dict(data, "innertubeCommand") if "continuationCommand" in c),
-                None
-            )
 
     if not endpoint:
         return None
